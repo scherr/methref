@@ -16,7 +16,8 @@ Performance
 ---
 
 Method invocation is sped up using dynamic code generation. Tentative experiments suggest that the performance is comparable with the untyped approaches.
-It seems that the optimization of reflective method invocation has received quite a lot of attention in recent JVM versions so the difference is not very large.
+
+It seems that the optimization of reflective method invocation has received quite a lot of attention in recent JVM versions so the difference to using this library is not very large.
 In the experiments such calls are initially slower and seem to be JIT-compiled and optimized in a different fashion than other method objects including method handles, e.g.
 calls involving primitive types are quite a bit faster after some point.
 
