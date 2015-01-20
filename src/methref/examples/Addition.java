@@ -1,8 +1,10 @@
 package methref.examples;
 
+import com.google.common.reflect.Invokable;
 import com.google.common.reflect.TypeToken;
 import methref.MethodReference;
 import methref.Static;
+import methref.StaticVoid;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;

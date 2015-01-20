@@ -6,14 +6,14 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-public abstract class MethodReference {
-    final Invokable<?, ?> invokable;
+public abstract class MethodReference<R> {
+    final Invokable<?, R> invokable;
 
-    MethodReference(Invokable<?, ?> invokable) {
+    MethodReference(Invokable<?, R> invokable) {
         this.invokable = invokable;
     }
 
-    public Invokable<?, ?> getInvokable() {
+    public Invokable<?, R> getInvokable() {
         return invokable;
     }
 

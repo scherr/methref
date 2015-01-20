@@ -4,6 +4,7 @@ import com.google.common.reflect.Invokable;
 import com.google.common.reflect.TypeToken;
 import javassist.*;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -109,12 +110,19 @@ class Resolution {
         } else if (from.isPrimitive() && !to.isPrimitive()) {
             CtPrimitiveType p = (CtPrimitiveType) cp.get(from.getName());
             if (to == Object.class) {
-                return "((" + to.getName() + ") " + p.getWrapperName() + ".valueOf(" + expression + "))";
-            } else {
                 return "(" + p.getWrapperName() + ".valueOf(" + expression + "))";
+            } else {
+                return "((" + to.getName() + ") " + p.getWrapperName() + ".valueOf(" + expression + "))";
             }
         } else {
-            return "((" + to.getName() + ") " + expression + ")";
+            String t = "";
+            if (to.isArray()) {
+                while (to.isArray()) {
+                    to = to.getComponentType();
+                    t = t + "[]";
+                }
+            }
+            return "((" + to.getName() + t + ") " + expression + ")";
         }
     }
 
