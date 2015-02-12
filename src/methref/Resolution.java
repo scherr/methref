@@ -1,38 +1,68 @@
 package methref;
 
 import com.google.common.reflect.Invokable;
+import com.google.common.reflect.Parameter;
 import com.google.common.reflect.TypeToken;
 import javassist.*;
 
-import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentHashMap;
 
 class Resolution {
     private static ConcurrentHashMap<Invokable<?, ?>, MethodReference> cache = new ConcurrentHashMap<>();
 
-    private static <O, R> MethodReference resolve(TypeToken<O> clazz, String name, TypeToken<R> returnType, TypeToken<?>... paramTypes) {
-        Class<?>[] rawParamTypes = new Class[paramTypes.length];
-        for (int i = 0; i < paramTypes.length; i++) {
-            rawParamTypes[i] = paramTypes[i].getRawType();
-        }
-
+    private static <O, R> MethodReference resolve(TypeToken<O> clazz, boolean isStatic, String name, TypeToken<R> returnType, TypeToken<?>... paramTypes) {
         Class<? super O> rawClass = clazz.getRawType();
 
-        java.lang.reflect.Method rawMethod;
-        try {
-            rawMethod = rawClass.getMethod(name, rawParamTypes);
-        } catch (NoSuchMethodException e) {
-            throw new RuntimeException(e);
+        Method tempRawMethod = null;
+        Invokable<O, R> tempInvokable = null;
+        outer:
+        for (Method m : rawClass.getDeclaredMethods()) {
+            tempRawMethod = m;
+            tempInvokable = (Invokable<O, R>) clazz.method(m);
+
+            if (tempInvokable.isStatic() != isStatic ||
+                    !tempInvokable.getName().equals(name) ||
+                    !tempInvokable.getReturnType().equals(returnType)) {
+                tempRawMethod = null;
+                tempInvokable = null;
+                continue;
+            }
+
+            int i = 0;
+            for (Parameter p : tempInvokable.getParameters()) {
+                if (!p.getType().equals(paramTypes[i])) {
+                    tempRawMethod = null;
+                    tempInvokable = null;
+                    continue outer;
+                }
+                i++;
+            }
+
+            break;
         }
 
-        if (!returnType.getType().equals(rawMethod.getGenericReturnType())) {
-            throw new RuntimeException("Requested return type \"" + returnType.getType() + "\" does not match actual return type \"" + rawMethod.getGenericReturnType() + "\"." );
+        Method rawMethod = tempRawMethod;
+        Invokable<O, R> invokable = tempInvokable;
+
+        if (invokable == null) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Could not resolve " + (isStatic ? "static" : "virtual") + " method \"");
+            sb.append(clazz + "." + name + "(");
+            for (int i = 0; i < paramTypes.length - 1; i++) {
+                sb.append(paramTypes[i] + ", ");
+            }
+            if (paramTypes.length > 0) {
+                sb.append(paramTypes[paramTypes.length - 1]);
+            }
+            sb.append(")" + returnType);
+            sb.append("\"!");
+
+            throw new RuntimeException(sb.toString());
         }
 
-        Invokable<O, R> invokable = (Invokable<O, R>) clazz.method(rawMethod);
-
-        return cache.computeIfAbsent(invokable, inv -> {
+        return cache.computeIfAbsent(tempInvokable, inv -> {
             ClassPool cp = ClassPool.getDefault();
             CtClass c = cp.makeClass(Resolution.class.getName() + "$ResolvedMethodReference" + cache.size());
 
@@ -40,9 +70,9 @@ class Resolution {
 
             try {
                 if (returnType.getRawType() == void.class) {
-                    c.setSuperclass(cp.get(VoidMethodReference.class.getName() + "$_" + paramTypes.length));
+                    c.setSuperclass(cp.get(VoidMethodReference.class.getName() + "$_" + (paramTypes.length + (invokable.isStatic() ? 0 : 1))));
                 } else {
-                    c.setSuperclass(cp.get(MethodReference.class.getName() + "$_" + paramTypes.length));
+                    c.setSuperclass(cp.get(MethodReference.class.getName() + "$_" + (paramTypes.length + (invokable.isStatic() ? 0 : 1))));
                 }
 
                 CtConstructor constructor = CtNewConstructor.make("constructor(" + Invokable.class.getName() + " invokable) { super(invokable); }", c);
@@ -55,31 +85,40 @@ class Resolution {
                     methodSource.append("public Object invoke(");
                 }
 
-                for (int i = 0; i < paramTypes.length - 1; i++) {
-                    methodSource.append("Object arg" + i + ", ");
-                }
-                if (paramTypes.length > 0) {
-                    methodSource.append("Object arg" + (paramTypes.length - 1));
-                }
-                methodSource.append(") {\n");
-
                 StringBuilder expression = new StringBuilder();
                 if (invokable.isStatic()) {
-                    expression.append(rawClass.getName() + "." + name + "(");
                     for (int i = 0; i < paramTypes.length - 1; i++) {
-                        expression.append(convert(cp, Object.class, rawParamTypes[i], "arg" + i) + ", ");
+                        methodSource.append("Object arg" + i + ", ");
                     }
                     if (paramTypes.length > 0) {
-                        expression.append(convert(cp, Object.class, rawParamTypes[paramTypes.length - 1], "arg" + (paramTypes.length - 1)));
+                        methodSource.append("Object arg" + (paramTypes.length - 1));
+                    }
+                    methodSource.append(") {\n");
+
+                    expression.append(rawClass.getName() + "." + name + "(");
+                    for (int i = 0; i < paramTypes.length - 1; i++) {
+                        expression.append(convert(cp, Object.class, paramTypes[i].getRawType(), "arg" + i) + ", ");
+                    }
+                    if (paramTypes.length > 0) {
+                        expression.append(convert(cp, Object.class, paramTypes[paramTypes.length - 1].getRawType(), "arg" + (paramTypes.length - 1)));
                     }
                     expression.append(")");
                 } else {
-                    expression.append("arg0." + name + "(");
-                    for (int i = 1; i < paramTypes.length - 1; i++) {
-                        expression.append(convert(cp, Object.class, rawParamTypes[i], "arg" + i) + ", ");
+                    methodSource.append("Object arg0, ");
+                    for (int i = 0; i < paramTypes.length - 1; i++) {
+                        methodSource.append("Object arg" + (i + 1) + ", ");
                     }
-                    if (paramTypes.length > 1) {
-                        expression.append(convert(cp, Object.class, rawParamTypes[paramTypes.length - 1], "arg" + (paramTypes.length - 1)));
+                    if (paramTypes.length > 0) {
+                        methodSource.append("Object arg" + paramTypes.length);
+                    }
+                    methodSource.append(") {\n");
+
+                    expression.append(convert(cp, Object.class, rawClass, "arg0") + "." + name + "(");
+                    for (int i = 0; i < paramTypes.length - 1; i++) {
+                        expression.append(convert(cp, Object.class, paramTypes[i].getRawType(), "arg" + (i + 1)) + ", ");
+                    }
+                    if (paramTypes.length > 0) {
+                        expression.append(convert(cp, Object.class, paramTypes[paramTypes.length - 1].getRawType(), "arg" + paramTypes.length));
                     }
                     expression.append(")");
                 }
@@ -89,7 +128,7 @@ class Resolution {
                 } else {
                     methodSource.append("   return " + convert(cp, rawMethod.getReturnType(), Object.class, expression.toString()));
                 }
-                methodSource.append(";\n }");
+                methodSource.append(";\n}");
 
                 CtMethod method = CtMethod.make(methodSource.toString(), c);
                 c.addMethod(method);
@@ -127,18 +166,18 @@ class Resolution {
     }
 
     static <O, R> MethodReference resolveStatic(TypeToken<O> clazz, String name, TypeToken<R> returnType, TypeToken<?>... paramTypes) {
-        return resolve(clazz, name, returnType, paramTypes);
+        return resolve(clazz, true, name, returnType, paramTypes);
     }
 
     static <O> VoidMethodReference resolveStaticVoid(TypeToken<O> clazz, String name, TypeToken<?>... paramTypes) {
-        return (VoidMethodReference) resolve(clazz, name, TypeToken.of(void.class), paramTypes);
+        return (VoidMethodReference) resolve(clazz, true, name, TypeToken.of(void.class), paramTypes);
     }
 
     static <O, R> MethodReference resolveVirtual(TypeToken<O> clazz, String name, TypeToken<R> returnType, TypeToken<?>... paramTypes) {
-        return resolve(clazz, name, returnType, paramTypes);
+        return resolve(clazz, false, name, returnType, paramTypes);
     }
 
     static <O> VoidMethodReference resolveVirtualVoid(TypeToken<O> clazz, String name, TypeToken<?>... paramTypes) {
-        return (VoidMethodReference) resolve(clazz, name, TypeToken.of(void.class), paramTypes);
+        return (VoidMethodReference) resolve(clazz, false, name, TypeToken.of(void.class), paramTypes);
     }
 }
