@@ -32,3 +32,4 @@ Unfinished Business
 
 * Proper error handling (checked exceptions)
 * Experiments and tests
+* Extending parameter limit? Currently set to 32 parameters ...
