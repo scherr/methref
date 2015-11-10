@@ -1,4 +1,4 @@
-Type-safe Method References
+Type-Safe Method References
 ===
 
 Maximilian Scherr, 2014-
